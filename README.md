@@ -136,7 +136,7 @@ Building this taught me that **ML for finance is 20% algorithms, 80% avoiding tr
    Paper strategies are elegant. Real backtests expose edge cases.
 
 5. **Simplicity is underrated**  
-   3 regimes, 6 features, 3 rules. Works better than overcomplicated alternatives.
+   3 regimes, 3 features, 3 rules. Works better than overcomplicated alternatives.
 
 📖 **Full reflections:** [LEARNINGS.md](LEARNINGS.md) (seriously, read this—it's the good stuff)
 
@@ -203,7 +203,7 @@ regime_visualization_train.png              # Cumulative returns by regime
 Unsupervised learning · Time series analysis · Feature engineering · Model validation · Walk-forward testing
 
 **Finance:**  
-Quantitative trading · Risk management · Backtesting · Technical analysis · Cross-asset correlations
+Quantitative trading · Risk management · Backtesting · Sector correlation analysis · Market regime detection
 
 **Software Engineering:**  
 Modular architecture · Model persistence · Data pipelines · Documentation · Reproducibility
