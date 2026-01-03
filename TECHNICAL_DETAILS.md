@@ -5,9 +5,9 @@
 ```python
 # Key hyperparameters
 n_states = 3                    # Growth, Correction, Crisis
-n_iter = 100                    # EM algorithm iterations
+n_iter = 1000                   # EM algorithm iterations
 covariance_type = "full"        # Full covariance matrices
-init_params = "kmeans"          # K-means initialization
+random_state = 42               # Reproducibility
 ```
 
 ### Why Hidden Markov Models?
@@ -28,45 +28,42 @@ Feature selection is critical for regime detection. Each feature captures differ
 
 | Feature | Purpose | Regime Signal | Range |
 |---------|---------|---------------|-------|
-| **Log Returns** | Normalized price changes | Direction & magnitude of market movement | (-∞, +∞) |
-| **RSI** | Overbought/oversold momentum | Regime exhaustion and reversal points | [0, 100] |
-| **Bollinger %B** | Price position in volatility envelope | Breakout detection and volatility regime | [0, 1] |
-| **MACD** | Trend strength and direction | Regime transitions and momentum shifts | (-∞, +∞) |
-| **Volatility** | 20-day rolling standard deviation | Risk environment and market stress | [0, +∞) |
-| **Systemic Health Score** | Cross-asset correlations | Systemic stress across markets | [-1, 1] |
+| **Index Returns** | Daily log returns of S&P 500 | Direction & magnitude of market movement | (-∞, +∞) |
+| **Index Volatility** | 21-day rolling std of returns | Risk environment and market stress | [0, +∞) |
+| **Systemic Health Score** | 60-day avg sector correlations | Market coupling/fragility indicator | [-1, 1] |
 
-### Technical Indicator Details
+### Feature Details
 
-#### RSI (Relative Strength Index)
+#### Index Returns (Log Returns)
 ```python
-# Momentum oscillator measuring speed and magnitude of price changes
-# RSI > 70: Overbought (potential correction)
-# RSI < 30: Oversold (potential recovery)
-# Used to detect regime exhaustion
+# Log transformation of daily returns
+# log(price_t / price_{t-1})
+# Properties:
+#  - Time-additive: sum of log returns = log of total return
+#  - Approximately normal distribution
+#  - Symmetric treatment of gains/losses
 ```
 
-#### Bollinger Bands %B
+#### Index Volatility (21-Day Rolling)
 ```python
-# Normalized position within Bollinger Bands
-# %B > 1: Price above upper band (high volatility)
-# %B < 0: Price below lower band (low volatility)
-# Captures volatility regime transitions
-```
-
-#### MACD (Moving Average Convergence Divergence)
-```python
-# Trend-following momentum indicator
-# MACD > Signal: Bullish momentum
-# MACD < Signal: Bearish momentum
-# Crossovers signal regime changes
+# Rolling standard deviation of log returns
+# Window: 21 trading days (≈1 month)
+# Low volatility (<0.01) → Growth regime
+# High volatility (>0.02) → Crisis regime
 ```
 
 #### Systemic Health Score
 ```python
-# Cross-asset correlation analysis
-# Measures: S&P 500 correlations with VIX, Treasury bonds, Gold
-# High correlation with VIX → Market stress (Crisis regime)
-# Low correlation → Stable environment (Growth regime)
+# Average pairwise correlation between 5 sector ETFs
+# Window: 60 trading days (≈3 months)
+# Calculation: Upper triangle of correlation matrix only
+# Low correlation (0.2-0.4) → Decoupled, healthy market (Growth)
+# High correlation (0.8-1.0) → Systemic stress (Crisis)
+#
+# Why it matters:
+# - When correlation spikes to 1.0, all sectors move together
+# - Signals liquidity crisis or market-wide panic
+# - Everything becomes "risk-on/risk-off" trade
 ```
 
 ### Feature Standardization
@@ -138,35 +135,36 @@ def execute_trade(current_regime, position):
 The HMM produces unlabeled states (0, 1, 2). We automatically assign meaningful names:
 
 ```python
-def label_regimes(states, returns, volatility):
+def label_regimes(states_summary):
     """
-    Assign semantic labels to HMM states
+    Assign semantic labels to HMM states based on feature statistics
     
     Strategy:
     1. Calculate mean return and volatility for each state
-    2. State with highest return + lowest vol → Growth
-    3. State with negative return → Correction
-    4. State with highest volatility → Crisis
+    2. Low volatility + positive returns → Growth
+    3. High volatility (>75th percentile) → Crisis  
+    4. Everything else → Correction
     """
-    state_stats = {}
-    for state in [0, 1, 2]:
-        mask = (states == state)
-        state_stats[state] = {
-            'mean_return': returns[mask].mean(),
-            'volatility': volatility[mask].mean()
-        }
-    
-    # Labeling logic
-    labels = {}
-    for state, stats in state_stats.items():
-        if stats['mean_return'] > 0 and stats['volatility'] < threshold:
-            labels[state] = "Growth"
-        elif stats['mean_return'] < 0:
-            labels[state] = "Correction"
+    regime_labels = {}
+    for regime_id in range(3):
+        vol = states_summary.loc[regime_id, 'Index_Volatility']
+        ret = states_summary.loc[regime_id, 'Index_Returns']
+        
+        if vol < states_summary['Index_Volatility'].median() and ret > 0:
+            regime_labels[regime_id] = 'Growth'
+        elif vol > states_summary['Index_Volatility'].quantile(0.75):
+            regime_labels[regime_id] = 'Crisis'
         else:
-            labels[state] = "Crisis"
+            regime_labels[regime_id] = 'Correction'
     
-    return labels
+    return regime_labels
+```
+
+**Example Output:**
+```
+Regime 0: Growth      (mean_return: +0.0008, volatility: 0.0065)
+Regime 1: Correction  (mean_return: -0.0003, volatility: 0.0095)
+Regime 2: Crisis      (mean_return: -0.0001, volatility: 0.0180)
 ```
 
 ---

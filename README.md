@@ -33,15 +33,15 @@ This project uses **Hidden Markov Models** (unsupervised ML) to discover three h
 pip install yfinance pandas numpy hmmlearn scikit-learn matplotlib joblib
 
 # Run the pipeline (3 steps, ~2 minutes total)
-python information_generation_system_module_1.py  # Feature engineering
-python information_generation_system_module_2.py  # Regime detection
-python action_execution_system.py                 # Backtesting
+python information_generation_system_module_1.py  # Feature engineering (S&P 500 + sectors)
+python information_generation_system_module_2.py  # HMM training & regime detection
+python action_execution_system.py                 # Backtesting & performance
 ```
 
 That's it! You'll see:
-- Which regime each day belongs to
-- Trading performance vs buy-and-hold
-- Regime transition visualization
+- Which regime each day belongs to (Growth/Correction/Crisis)
+- Trading decisions based on regime detection
+- Regime transition visualization with colored background
 
 **Want details?** See [QUICK_START.md](QUICK_START.md) for step-by-step instructions.
 
@@ -76,29 +76,29 @@ Our system:
 ### The Three-Module Pipeline
 
 ```
-📊 MARKET DATA          →  🤖 AI DETECTION       →  💰 TRADING STRATEGY
-────────────────────────    ────────────────────    ──────────────────
-S&P 500, VIX,              Hidden Markov Model      IF Growth  → BUY
-Bonds, Gold                discovers 3 regimes      IF Crisis  → SELL
-                           from features            IF Correction → HOLD
+📊 MARKET DATA                 →  🤖 AI DETECTION       →  💰 TRADING STRATEGY
+───────────────────────────       ────────────────────    ──────────────────
+S&P 500 + 5 Sector ETFs          Hidden Markov Model      IF Growth  → BUY
+(XLK, XLF, XLV, XLE, XLI)        discovers 3 regimes      IF Crisis  → SELL
+                                 from features            IF Correction → HOLD
 ```
 
 **Module 1: Feature Engineering**  
-Transform raw prices into meaningful indicators:
-- Technical: RSI, Bollinger Bands, MACD  
-- Risk: Volatility, cross-asset correlations  
-- Novel: **Systemic Health Score** (our secret sauce)
+Transform raw prices into 3 key features:
+- **Index Returns**: Daily log returns of S&P 500 (directional signal)
+- **Index Volatility**: 21-day rolling standard deviation (risk measure)  
+- **Systemic Health Score**: 60-day sector correlation (coupling/fragility indicator)
 
 **Module 2: Regime Detection**  
-HMM discovers hidden states, we automatically label them:
+Gaussian HMM discovers 3 hidden states, automatically labeled:
 ```python
-High returns + Low volatility  → Growth
-Negative returns               → Correction  
-High volatility + Stress       → Crisis
+Low volatility + Positive returns + Low correlation  → Growth
+Negative returns                                     → Correction  
+High volatility + High correlation                   → Crisis
 ```
 
 **Module 3: Trading Execution**  
-Simple, interpretable rules. No black boxes.
+Simple regime-based rules with percentage allocations.
 
 📖 **Deep dive:** [ARCHITECTURE.md](ARCHITECTURE.md) | [TECHNICAL_DETAILS.md](TECHNICAL_DETAILS.md)
 
@@ -110,11 +110,11 @@ Simple, interpretable rules. No black boxes.
 |---------|-------------|---------------------------|
 | **ML Validation** | Walk-forward (2012-2017 → 2018) | K-fold cross-validation (wrong for time series!) |
 | **Regime Labels** | Automatic (unsupervised) | Manual labeling (expensive/biased) |
-| **Feature Engineering** | Domain-driven (RSI, MACD, systemic health) | Raw prices (leaves money on table) |
+| **Feature Engineering** | Domain-driven (volatility + sector coupling) | Raw prices (leaves money on table) |
 | **Interpretability** | Explainable regimes + rules | Black-box predictions |
 | **Reproducibility** | Saved models, fixed seeds | "Trust me, it worked" |
 
-**Key Innovation:** The **Systemic Health Score**—measuring cross-asset correlations to detect systemic stress before it's obvious.
+**Key Innovation:** The **Systemic Health Score**—measuring sector correlations to detect when markets move in lockstep (systemic stress indicator).
 
 ---
 
@@ -164,18 +164,18 @@ This is a proof-of-concept. To make it production-ready:
 ## 📁 Project Files
 
 ```
-information_generation_system_module_1.py    # Feature engineering
+information_generation_system_module_1.py    # Feature engineering (S&P 500 + sectors)
 information_generation_system_module_2.py    # HMM training & regime detection
 action_execution_system.py                   # Trading strategy & backtesting
 
-features_complete_2012_2018.csv             # Generated features
-regimes_train_2012_2017.csv                 # Training regimes
-regimes_test_2018.csv                       # Test predictions
+features_complete_2012_2018.csv             # 3 engineered features (2012-2018)
+regimes_train_2012_2017.csv                 # Training regimes with labels
+regimes_test_2018.csv                       # Out-of-sample predictions (2018)
 
-hmm_model.pkl                               # Trained model
-scaler.pkl                                  # Feature scaler
-regime_labels.pkl                           # State mappings
-regime_visualization_train.png              # Visual results
+hmm_model.pkl                               # Trained Gaussian HMM (3 states)
+scaler.pkl                                  # StandardScaler for features
+regime_labels.pkl                           # State ID → Regime name mapping
+regime_visualization_train.png              # Cumulative returns by regime
 ```
 
 ---

@@ -55,7 +55,9 @@ Transform raw price data into meaningful features that capture market dynamics f
 
 ### Input
 - **Data Source:** Yahoo Finance API
-- **Assets:** S&P 500 (^GSPC), VIX (^VIX), 10Y Treasury (^TNX), Gold (GC=F)
+- **Assets:** 
+  - S&P 500 Index (^GSPC)
+  - 5 Sector ETFs: XLK (Tech), XLF (Finance), XLV (Healthcare), XLE (Energy), XLI (Industrials)
 - **Period:** 2012-01-01 to 2018-12-31 (7 years)
 - **Frequency:** Daily
 
@@ -65,61 +67,75 @@ Transform raw price data into meaningful features that capture market dynamics f
 ```python
 import yfinance as yf
 
-# Download historical data
-sp500 = yf.download('^GSPC', start='2012-01-01', end='2018-12-31')
-vix = yf.download('^VIX', start='2012-01-01', end='2018-12-31')
-bonds = yf.download('^TNX', start='2012-01-01', end='2018-12-31')
-gold = yf.download('GC=F', start='2012-01-01', end='2018-12-31')
+# Download S&P 500 and sector ETFs
+index_ticker = "^GSPC"
+sector_tickers = ["XLK", "XLF", "XLV", "XLE", "XLI"]
+all_tickers = [index_ticker] + sector_tickers
+
+raw_data = yf.download(all_tickers, start="2012-01-01", end="2018-12-31")
+data = raw_data["Adj Close"]  # Use adjusted close prices
 ```
 
-#### 2. Technical Indicator Calculation
+#### 2. Feature Calculation
 
-**RSI (Relative Strength Index)**
-- **Purpose:** Measure momentum and overbought/oversold conditions
-- **Period:** 14 days
-- **Range:** 0-100
-- **Interpretation:** >70 overbought, <30 oversold
+**Index Returns (Log Returns)**
+- **Purpose:** Capture directional movement and magnitude of market changes
+- **Calculation:** `log(price_t / price_{t-1})`
+- **Properties:** Time-additive, approximately normal distribution
+- **Range:** (-∞, +∞)
+- **Interpretation:** Positive = gains, negative = losses
 
-**Bollinger Bands %B**
-- **Purpose:** Measure price position within volatility envelope
-- **Components:** 20-day SMA ± 2 standard deviations
-- **Range:** 0-1 (can exceed during breakouts)
-- **Interpretation:** >1 above upper band, <0 below lower band
+**Index Volatility (21-Day Rolling Standard Deviation)**
+- **Purpose:** Measure market risk and uncertainty
+- **Window:** 21 trading days (≈1 month)
+- **Calculation:** Rolling standard deviation of log returns
+- **Range:** [0, +∞)
+- **Interpretation:** Higher values indicate crisis/correction regimes
 
-**MACD (Moving Average Convergence Divergence)**
-- **Purpose:** Track trend changes and momentum
-- **Components:** 12-day EMA - 26-day EMA
-- **Signal Line:** 9-day EMA of MACD
-- **Interpretation:** MACD > Signal is bullish
+**Systemic Health Score (60-Day Sector Correlation)**
+- **Purpose:** Detect market coupling and systemic fragility
+- **Window:** 60 trading days (≈3 months)
+- **Calculation:** Average pairwise correlation between 5 sector ETFs
+- **Range:** [-1, 1] (typically 0.2 to 0.9)
+- **Interpretation:**
+  - Low correlation (0.2-0.4) = Healthy, decoupled sectors (Growth)
+  - High correlation (0.8-1.0) = Systemic stress, lockstep movement (Crisis)
 
-**Volatility**
-- **Calculation:** 20-day rolling standard deviation of returns
-- **Purpose:** Measure market uncertainty and risk
-- **Higher values:** Crisis or correction regimes
+#### 3. Systemic Health Score Implementation Implementation
 
-#### 3. Systemic Health Score
-
-Novel feature measuring cross-asset correlations:
+Measures cross-sector correlations to detect ecosystem-level behavior:
 
 ```python
-def calculate_systemic_health(sp500, vix, bonds, gold, window=20):
+def get_avg_sector_correlation(returns_slice):
     """
-    Measures systemic market health via correlations
+    Calculate average pairwise correlation between sectors
     
     Logic:
-    - High VIX correlation → Market stress (Crisis)
-    - High bond correlation → Flight to safety (Correction/Crisis)
-    - Low correlations → Stable environment (Growth)
+    - Uses upper triangle of correlation matrix to avoid duplicates
+    - Excludes self-correlation (diagonal = 1.0)
+    - Returns mean correlation across all sector pairs
     
-    Returns: Composite score [-1, 1]
+    Interpretation:
+    - Low correlation (0.2-0.4): Sectors moving independently (healthy)
+    - High correlation (0.8-1.0): All sectors coupled (systemic stress)
+    
+    When correlation spikes to 1.0:
+    - Signals liquidity crisis or market-wide panic
+    - Everything becomes a "risk-on/risk-off" trade
+    - Powerful early warning signal for regime shifts
     """
-    corr_vix = sp500.rolling(window).corr(vix)
-    corr_bonds = sp500.rolling(window).corr(bonds)
-    corr_gold = sp500.rolling(window).corr(gold)
-    
-    # Weight negative correlations (flight to safety)
-    health_score = -(abs(corr_vix) + abs(corr_bonds) + abs(corr_gold)) / 3
-    return health_score
+    corr_matrix = returns_slice.corr()
+    # Take only upper triangle to avoid duplicates and diagonal
+    mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+    return corr_matrix.where(mask).mean().mean()
+
+# Apply over 60-day rolling window
+for i in range(len(sector_returns)):
+    if i < 59:  # Not enough data for 60-day window
+        systemic_scores.append(np.nan)
+    else:
+        window_data = sector_returns.iloc[i-59:i+1]
+        systemic_scores.append(get_avg_sector_correlation(window_data))
 ```
 
 #### 4. Data Cleaning
@@ -132,16 +148,17 @@ def calculate_systemic_health(sp500, vix, bonds, gold, window=20):
 **File:** `features_complete_2012_2018.csv`
 
 **Columns:**
-- `Date`: Trading date
-- `Close`: S&P 500 closing price
-- `Log_Return`: Log-transformed daily returns
-- `RSI`: Relative Strength Index
-- `Bollinger_B`: Bollinger %B indicator
-- `MACD`: MACD histogram
-- `Volatility`: 20-day rolling std
-- `Systemic_Health`: Cross-asset correlation score
+- `Date`: Trading date (index)
+- `Index_Returns`: S&P 500 log returns
+- `Index_Volatility`: 21-day rolling standard deviation
+- `Systemic_Health_Score`: 60-day average sector correlation
 
-**Shape:** ~1,760 rows × 8 columns (7 years of trading days)
+**Shape:** ~1,500 rows × 3 feature columns (after dropping NaN from rolling windows)
+
+**Data Quality:**
+- First ~60 rows have NaN due to rolling window requirements
+- Dropped via `dropna()` before saving
+- Final dataset: 2012-04-02 to 2018-12-31
 
 ### Runtime
 - **Typical:** 30-60 seconds
@@ -183,7 +200,7 @@ X_train_scaled = scaler.fit_transform(train_data[feature_columns])
 X_test_scaled = scaler.transform(test_data[feature_columns])  # Use train statistics
 ```
 
-**Why?** Prevents high-variance features (price) from dominating low-variance features (RSI).
+**Why?** Prevents high-variance features from dominating low-variance features. All three features contribute equally to regime detection.
 
 #### 3. Hidden Markov Model Training
 
@@ -193,8 +210,7 @@ from hmmlearn.hmm import GaussianHMM
 model = GaussianHMM(
     n_components=3,              # 3 hidden states
     covariance_type='full',      # Full covariance matrices
-    n_iter=100,                  # EM algorithm iterations
-    init_params='kmeans',        # K-means initialization
+    n_iter=1000,                 # EM algorithm iterations (increased for convergence)
     random_state=42              # Reproducibility
 )
 
@@ -202,11 +218,11 @@ model.fit(X_train_scaled)
 ```
 
 **Training Algorithm:**
-1. **Initialization:** K-means clustering to set initial state means
+1. **Initialization:** Random initialization of state parameters
 2. **Expectation-Maximization (EM):**
    - E-step: Estimate state probabilities given current parameters
    - M-step: Update parameters to maximize likelihood
-   - Repeat 100 iterations until convergence
+   - Repeat 1000 iterations until convergence
 3. **Convergence:** Monitor log-likelihood improvements
 
 #### 4. State Prediction (Viterbi Algorithm)
@@ -227,61 +243,60 @@ test_states = model.predict(X_test_scaled)
 The HMM produces numerical states (0, 1, 2). We automatically assign meaningful labels:
 
 ```python
-def label_regimes_automatically(states, returns, volatility):
+def label_regimes_automatically(states_summary):
     """
     Assign Growth/Correction/Crisis labels based on statistics
     
     Rules:
     1. Calculate mean return and volatility for each state
-    2. State with highest return + lowest vol → Growth
-    3. State with negative return → Correction
-    4. State with highest volatility → Crisis
+    2. Low vol + positive returns → Growth
+    3. High vol (>75th percentile) → Crisis
+    4. Everything else → Correction
     """
-    state_profiles = {}
+    regime_labels = {}
     
-    for state in [0, 1, 2]:
-        mask = (states == state)
-        state_profiles[state] = {
-            'mean_return': returns[mask].mean(),
-            'volatility': volatility[mask].mean(),
-            'days': mask.sum()
-        }
-    
-    # Labeling logic
-    labels = {}
-    for state, profile in state_profiles.items():
-        if profile['mean_return'] > 0 and profile['volatility'] < median_vol:
-            labels[state] = "Growth"
-        elif profile['mean_return'] < 0:
-            labels[state] = "Correction"
+    for regime_id in range(3):
+        vol = states_summary.loc[regime_id, 'Index_Volatility']
+        ret = states_summary.loc[regime_id, 'Index_Returns']
+        
+        if vol < states_summary['Index_Volatility'].median() and ret > 0:
+            regime_labels[regime_id] = 'Growth'
+        elif vol > states_summary['Index_Volatility'].quantile(0.75):
+            regime_labels[regime_id] = 'Crisis'
         else:
-            labels[state] = "Crisis"
+            regime_labels[regime_id] = 'Correction'
     
-    return labels
+    return regime_labels
 ```
 
 **Example Output:**
 ```
-State 0: Growth      (mean_return: +0.08%, volatility: 0.7%)
-State 1: Correction  (mean_return: -0.12%, volatility: 1.1%)
-State 2: Crisis      (mean_return: -0.05%, volatility: 1.8%)
+State 0: Growth      (mean_return: +0.0008, volatility: 0.0065)
+State 1: Correction  (mean_return: -0.0003, volatility: 0.0095)
+State 2: Crisis      (mean_return: -0.0001, volatility: 0.0180)
 ```
 
 #### 6. Visualization
 
-Generate regime transition plot:
+Generate cumulative returns plot colored by regime:
 
 ```python
-plt.figure(figsize=(15, 6))
-plt.plot(dates, prices, 'k-', alpha=0.7)
+# Calculate cumulative returns for visualization
+train_df['Cumulative_Returns'] = (1 + train_df['Index_Returns']).cumprod() - 1
 
-# Color background by regime
-for i in range(len(regimes)-1):
-    color_map = {'Growth': 'green', 'Correction': 'yellow', 'Crisis': 'red'}
-    plt.axvspan(dates[i], dates[i+1], alpha=0.3, color=color_map[regimes[i]])
+plt.figure(figsize=(15, 8))
+for i in range(model.n_components):
+    mask = train_df['Regime'] == i
+    label = regime_labels.get(i, f'Regime {i}')
+    plt.plot(train_df.index[mask], train_df["Cumulative_Returns"][mask], '.', 
+             label=f'{label} (State {i})', alpha=0.7)
 
-plt.title('S&P 500 Market Regimes (2012-2017)')
-plt.savefig('regime_visualization_train.png')
+plt.title("S&P 500 Cumulative Returns by Market Regime (Training: 2012-2017)")
+plt.xlabel("Date")
+plt.ylabel("Cumulative Returns")
+plt.legend(loc='best')
+plt.grid(True, alpha=0.3)
+plt.savefig('regime_visualization_train.png', dpi=300)
 ```
 
 ### Output
@@ -308,7 +323,7 @@ Execute trading strategy based on detected regimes and evaluate performance.
 
 ### Input
 - **File:** `regimes_test_2018.csv`
-- **Columns:** `Date`, `Close`, `Regime`
+- **Columns:** `Date`, `Index_Returns`, `Index_Volatility`, `Systemic_Health_Score`, `Regime`, `Regime_Label`
 - **Period:** 2018 (out-of-sample test)
 
 ### Trading Strategy
@@ -316,57 +331,53 @@ Execute trading strategy based on detected regimes and evaluate performance.
 #### Decision Rules
 
 ```python
-class RegimeBasedStrategy:
-    def __init__(self, initial_capital=10000):
-        self.capital = initial_capital
-        self.position = "cash"  # or "long"
-        self.shares = 0
-        self.trades = []
-    
-    def execute(self, date, price, regime):
-        if regime == "Growth":
-            if self.position == "cash":
-                # BUY: Enter long position
-                self.shares = self.capital / price
-                self.position = "long"
-                self.trades.append({
-                    'date': date,
-                    'action': 'BUY',
-                    'price': price,
-                    'shares': self.shares
-                })
-        
-        elif regime == "Correction":
-            # HOLD: Wait it out
-            pass
-        
-        elif regime == "Crisis":
-            if self.position == "long":
-                # SELL: Exit to safety
-                self.capital = self.shares * price
-                self.position = "cash"
-                self.shares = 0
-                self.trades.append({
-                    'date': date,
-                    'action': 'SELL',
-                    'price': price,
-                    'value': self.capital
-                })
-    
-    def get_portfolio_value(self, current_price):
-        if self.position == "long":
-            return self.shares * current_price
-        else:
-            return self.capital
+def get_action_regime_based(current_regime_label):
+    """
+    Maps regime labels to trading actions.
+    Growth → BUY (Aggressive)
+    Correction → HOLD (Cautious)
+    Crisis → SELL (Defensive)
+    """
+    if current_regime_label == 'Growth':
+        return 'BUY'
+    elif current_regime_label == 'Crisis':
+        return 'SELL'
+    else:  # Correction or unknown
+        return 'HOLD'
+
+def execute_trade(agent, action, price, weight=1):
+    """
+    Executes trades based on percentage of available cash.
+    BUY: Invest 'weight' percentage of current cash
+    SELL: Sell 50% of current holdings to de-risk
+    """
+    if action == 'BUY':
+        amount_to_invest = agent['cash'] * weight
+        shares_to_buy = amount_to_invest / price
+        if agent['cash'] >= amount_to_invest:
+            agent['cash'] -= amount_to_invest
+            agent['portfolio']['S&P_500'] += shares_to_buy
+            agent['trade_history'].append(('BUY', price, shares_to_buy))
+            return True
+
+    elif action == 'SELL':
+        shares_to_sell = agent['portfolio']['S&P_500'] * 0.5  # Sell 50%
+        if shares_to_sell > 0:
+            agent['cash'] += shares_to_sell * price
+            agent['portfolio']['S&P_500'] -= shares_to_sell
+            agent['trade_history'].append(('SELL', price, shares_to_sell))
+            return True
+            
+    return False
 ```
 
 #### Rationale
 
 | Regime | Action | Reasoning |
 |--------|--------|-----------|
-| **Growth** | BUY (if in cash) | Favorable risk/reward - capture upside with low volatility |
-| **Correction** | HOLD | Short-term pullback - avoid whipsaw trades |
-| **Crisis** | SELL (if long) | Protect capital during systemic risk events |
+| **Growth** | BUY (weight% of cash) | Favorable risk/reward - capture upside with low volatility |
+| **Correction** | HOLD | Short-term pullback - avoid whipsaw trades, wait for clarity |
+| **Crisis** | SELL (50% of holdings) | Protect capital during systemic risk, gradual de-risking |
 
 ### Benchmark Strategy
 
