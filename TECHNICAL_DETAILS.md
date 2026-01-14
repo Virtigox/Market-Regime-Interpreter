@@ -461,6 +461,4 @@ plt.savefig('regime_visualization.png', dpi=300)
 
 ---
 
-*For system architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md)*  
-*For project learnings and insights, see [LEARNINGS.md](LEARNINGS.md)*  
-*For future improvements, see [FUTURE_WORK.md](FUTURE_WORK.md)*
+**Nyan Linn Htun (Nathan)** | AI & Machine Learning Final Project | December 2025
